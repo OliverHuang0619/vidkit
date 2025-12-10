@@ -193,53 +193,24 @@ extract_speech()
                 echo "  Error: Whisper transcription failed"
             fi
         elif python3 -c "import whisper" 2>/dev/null; then
-            python3 -c "
-import whisper
-import sys
-import os
-
-model_name = '$model'
-audio_file = '$temp_audio'
-output_file = '$output_file'
-language = '$language' if '$language' != 'auto' else None
-output_format = '$format'
-
-try:
-    model = whisper.load_model(model_name)
-    result = model.transcribe(audio_file, language=language)
-    
-    if output_format == 'txt':
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(result['text'])
-    elif output_format == 'srt':
-        with open(output_file, 'w', encoding='utf-8') as f:
-            for i, segment in enumerate(result['segments'], 1):
-                start = segment['start']
-                end = segment['end']
-                text = segment['text'].strip()
-                f.write(f\"{i}\n\")
-                f.write(f\"{int(start//3600):02d}:{int((start%3600)//60):02d}:{int(start%60):02d},{int((start%1)*1000):03d} --> {int(end//3600):02d}:{int((end%3600)//60):02d}:{int(end%60):02d},{int((end%1)*1000):03d}\n\")
-                f.write(f\"{text}\n\n\")
-    elif output_format == 'vtt':
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(\"WEBVTT\n\n\")
-            for segment in result['segments']:
-                start = segment['start']
-                end = segment['end']
-                text = segment['text'].strip()
-                f.write(f\"{int(start//3600):02d}:{int((start%3600)//60):02d}:{int(start%60):02d}.{int((start%1)*1000):03d} --> {int(end//3600):02d}:{int((end%3600)//60):02d}:{int(end%60):02d}.{int((end%1)*1000):03d}\n\")
-                f.write(f\"{text}\n\n\")
-    elif output_format == 'json':
-        import json
-        with open(output_file, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-    
-    print(f\"Transcription saved to: {output_file}\")
-except Exception as e:
-    print(f\"Error: {e}\", file=sys.stderr)
-    sys.exit(1)
-"
-            if [ $? -ne 0 ]; then
+            local script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
+            local python_script="${script_dir}/utils.py"
+            
+            if [ ! -f "$python_script" ]; then
+                python_script="utils.py"
+            fi
+            
+            local cmd_args=("$python_script" "transcribe" "$temp_audio" "$output_file" "--model" "$model")
+            if [ "$language" != "auto" ]; then
+                cmd_args+=("--language" "$language")
+            fi
+            cmd_args+=("--format" "$format")
+            
+            if python3 "${cmd_args[@]}" 2>&1; then
+                if [ -f "$output_file" ]; then
+                    echo "  Transcription saved to: $output_file"
+                fi
+            else
                 echo "  Error: Python Whisper transcription failed"
             fi
         fi
@@ -324,46 +295,14 @@ show_metadata()
             
             if command -v python3 >/dev/null 2>&1; then
                 echo "--- Format Information ---"
-                parsed_output=$(echo "$json_output" | python3 <<'PYTHON_SCRIPT' 2>/dev/null
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    format_info = data.get('format', {})
-    print(f"Format name: {format_info.get('format_name', 'N/A')}")
-    print(f"Format long name: {format_info.get('format_long_name', 'N/A')}")
-    print(f"Duration: {format_info.get('duration', 'N/A')} seconds")
-    print(f"Size: {format_info.get('size', 'N/A')} bytes")
-    print(f"Bitrate: {format_info.get('bit_rate', 'N/A')} bps")
-    print()
-    
-    tags = format_info.get('tags', {})
-    if tags:
-        print('--- Metadata Tags ---')
-        for key, value in sorted(tags.items()):
-            print(f"{key}: {value}")
-        print()
-    
-    streams = data.get('streams', [])
-    if streams:
-        print('--- Stream Information ---')
-        for i, stream in enumerate(streams):
-            codec_type = stream.get('codec_type', 'unknown')
-            codec_name = stream.get('codec_name', 'N/A')
-            print(f"Stream #{i} ({codec_type}):")
-            print(f"  Codec: {codec_name} ({stream.get('codec_long_name', 'N/A')})")
-            if codec_type == 'video':
-                print(f"  Resolution: {stream.get('width', 'N/A')}x{stream.get('height', 'N/A')}")
-                print(f"  Frame rate: {stream.get('r_frame_rate', 'N/A')}")
-                print(f"  Bitrate: {stream.get('bit_rate', 'N/A')} bps")
-            elif codec_type == 'audio':
-                print(f"  Sample rate: {stream.get('sample_rate', 'N/A')} Hz")
-                print(f"  Channels: {stream.get('channels', 'N/A')}")
-                print(f"  Bitrate: {stream.get('bit_rate', 'N/A')} bps")
-            print()
-except Exception as e:
-    sys.exit(1)
-PYTHON_SCRIPT
-)
+                local script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
+                local python_script="${script_dir}/utils.py"
+                
+                if [ ! -f "$python_script" ]; then
+                    python_script="utils.py"
+                fi
+                
+                parsed_output=$(echo "$json_output" | python3 "$python_script" parse-metadata 2>/dev/null)
                 
                 if [ $? -eq 0 ] && [ -n "$parsed_output" ]; then
                     echo "$parsed_output"
@@ -387,7 +326,7 @@ PYTHON_SCRIPT
     done
 }
 
-_video_tools_complete()
+_vidkit_complete()
 {
     local cur prev
     COMPREPLY=()
@@ -414,8 +353,8 @@ _video_tools_complete()
 }
 
 if [ "${BASH_SOURCE[0]}" != "${0}" ]; then
-    complete -F _video_tools_complete video_tools.sh
-    complete -F _video_tools_complete ./video_tools.sh
+    complete -F _vidkit_complete vidkit.sh
+    complete -F _vidkit_complete ./vidkit.sh
     return 0
 fi
 
