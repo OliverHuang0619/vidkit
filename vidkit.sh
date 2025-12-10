@@ -237,7 +237,7 @@ extract_speech()
     local language="auto"
     local model="base"
     local output_dir="transcriptions"
-    local format="txt"
+    local format="srt"
     local files=()
     
     while [[ $# -gt 0 ]]; do
@@ -451,6 +451,209 @@ show_metadata()
     done
 }
 
+burn_subtitles() 
+{
+    if [ $# -eq 0 ]; then
+        echo "Usage: burn_subtitles [options] video_file [srt_file]"
+        echo "  options:"
+        echo "    --srt FILE        SRT subtitle file (if not provided, searches for same name)"
+        echo "    --output FILE     Output video file (default: adds '_subtitled' suffix)"
+        echo "    --font-size SIZE  Font size (default: 24)"
+        echo "    --position POS    Subtitle position (bottom, top, center). Default: bottom"
+        echo "    --margin MARGIN    Vertical margin in pixels (default: 10 for bottom, 40 for top)"
+        echo "    --color COLOR     Text color in hex (default: FFFFFF)"
+        echo "    --outline COLOR   Outline color in hex (default: 000000)"
+        return 1
+    fi
+    
+    local srt_file=""
+    local output_file=""
+    local font_size=24
+    local position="bottom"
+    local margin_v=""
+    local text_color="FFFFFF"
+    local outline_color="000000"
+    local video_file=""
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --srt)
+                srt_file="$2"
+                shift 2
+                ;;
+            --output)
+                output_file="$2"
+                shift 2
+                ;;
+            --font-size)
+                font_size="$2"
+                shift 2
+                ;;
+            --position)
+                position="$2"
+                shift 2
+                ;;
+            --color)
+                text_color="$2"
+                shift 2
+                ;;
+            --outline)
+                outline_color="$2"
+                shift 2
+                ;;
+            --margin)
+                margin_v="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                if [ -z "$video_file" ] && [ $# -gt 0 ]; then
+                    video_file="$1"
+                    shift
+                fi
+                if [ -z "$srt_file" ] && [ $# -gt 0 ]; then
+                    srt_file="$1"
+                    shift
+                fi
+                break
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                if [ -z "$video_file" ]; then
+                    video_file="$1"
+                elif [ -z "$srt_file" ]; then
+                    srt_file="$1"
+                else
+                    echo "Error: Too many arguments"
+                    return 1
+                fi
+                shift
+                ;;
+        esac
+    done
+    
+    if [ -z "$video_file" ]; then
+        echo "Error: Video file not specified"
+        return 1
+    fi
+    
+    if [ ! -f "$video_file" ]; then
+        echo "Error: Video file $video_file does not exist"
+        return 1
+    fi
+    
+    local file_dir=$(dirname "$video_file")
+    local file_basename=$(basename "$video_file")
+    local file_basename_no_ext="${file_basename%.*}"
+    
+    if [ -z "$srt_file" ]; then
+        local possible_srt_files=(
+            "${file_dir}/.${file_basename_no_ext}.srt"
+            "${file_dir}/transcriptions/.${file_basename_no_ext}.srt"
+            "${file_dir}/../transcriptions/.${file_basename_no_ext}.srt"
+            "${file_dir}/${file_basename_no_ext}.srt"
+            "${file_dir}/transcriptions/${file_basename_no_ext}.srt"
+            "${file_dir}/../transcriptions/${file_basename_no_ext}.srt"
+        )
+        
+        for possible_file in "${possible_srt_files[@]}"; do
+            if [ -f "$possible_file" ]; then
+                srt_file="$possible_file"
+                break
+            fi
+        done
+    fi
+    
+    if [ -z "$srt_file" ] || [ ! -f "$srt_file" ]; then
+        echo "Error: SRT file not found"
+        if [ -z "$srt_file" ]; then
+            echo "  Searched for:"
+            echo "    ${file_dir}/${file_basename_no_ext}.srt"
+            echo "    ${file_dir}/transcriptions/${file_basename_no_ext}.srt"
+            echo "    ${file_dir}/../transcriptions/${file_basename_no_ext}.srt"
+        else
+            echo "  Specified file: $srt_file"
+        fi
+        echo "  Use --srt to specify the SRT file path"
+        return 1
+    fi
+    
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        echo "Error: ffmpeg not found. Please install ffmpeg."
+        return 1
+    fi
+    
+    local file_dir=$(dirname "$video_file")
+    local file_basename=$(basename "$video_file")
+    local file_basename_no_ext="${file_basename%.*}"
+    
+    if [ -z "$output_file" ]; then
+        output_file="${file_dir}/${file_basename_no_ext}_subtitled.mp4"
+    fi
+    
+    local temp_file="${file_dir}/.${file_basename}.tmp"
+    
+    local srt_file_abs
+    if command -v readlink >/dev/null 2>&1; then
+        srt_file_abs=$(readlink -f "$srt_file" 2>/dev/null || echo "$srt_file")
+    else
+        local srt_dir=$(cd "$(dirname "$srt_file")" 2>/dev/null && pwd)
+        local srt_name=$(basename "$srt_file")
+        if [ -n "$srt_dir" ]; then
+            srt_file_abs="${srt_dir}/${srt_name}"
+        else
+            srt_file_abs="$srt_file"
+        fi
+    fi
+    
+    if [ -z "$margin_v" ]; then
+        case "$position" in
+            top)
+                margin_v="40"
+                ;;
+            center)
+                margin_v="0"
+                ;;
+            bottom|*)
+                margin_v="10"
+                ;;
+        esac
+    fi
+    
+    local style_options="FontSize=${font_size},PrimaryColour=&H${text_color}&,OutlineColour=&H${outline_color}&,Outline=2,Shadow=1,Alignment=2,MarginV=${margin_v}"
+    
+    echo "Burning subtitles into video..."
+    echo "  Video: $video_file"
+    echo "  SRT: $srt_file"
+    echo "  Output: $output_file"
+    echo "  Font size: $font_size, Position: $position"
+    
+    local error_output
+    error_output=$(ffmpeg -i "$video_file" -vf "subtitles='$srt_file_abs':force_style='$style_options'" -c:a copy -c:v libx264 -preset medium -crf 23 -f mp4 "$temp_file" -y 2>&1)
+    local ffmpeg_exit_code=$?
+    
+    if [ $ffmpeg_exit_code -eq 0 ] && [ -f "$temp_file" ]; then
+        if [ -s "$temp_file" ]; then
+            mv "$temp_file" "$output_file"
+            echo "Success: Subtitles burned to $output_file"
+        else
+            echo "Error: Created file is empty"
+            echo "ffmpeg output: $error_output"
+            rm -f "$temp_file"
+            return 1
+        fi
+    else
+        echo "Error: Failed to burn subtitles"
+        echo "ffmpeg error output:"
+        echo "$error_output" | tail -n 20
+        [ -f "$temp_file" ] && rm -f "$temp_file"
+        return 1
+    fi
+}
+
 _vidkit_complete()
 {
     local cur prev
@@ -459,7 +662,7 @@ _vidkit_complete()
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [ $COMP_CWORD -eq 1 ]; then
-        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata" -- "$cur"))
+        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata burn_subtitles" -- "$cur"))
     elif [ "$prev" = "extract_audio" ] || [[ "${COMP_WORDS[@]}" =~ extract_audio.*--(output|format|output-file) ]]; then
         if [ "$prev" = "--format" ]; then
             COMPREPLY=($(compgen -W "wav mp3 aac" -- "$cur"))
@@ -467,7 +670,7 @@ _vidkit_complete()
             COMPREPLY=($(compgen -W "--output --output-file --format" -- "$cur"))
             COMPREPLY+=($(compgen -f -X '!*.mp4' -- "$cur"))
         fi
-    elif [ "$prev" = "extract_speech" ] || [[ "${COMP_WORDS[@]}" =~ --(language|model|output|format) ]]; then
+    elif [ "$prev" = "extract_speech" ] || [[ "${COMP_WORDS[@]}" =~ extract_speech.*--(language|model|output|format) ]]; then
         if [ "$prev" = "--language" ]; then
             COMPREPLY=($(compgen -W "auto zh en ja ko es fr de it pt ru ar hi" -- "$cur"))
         elif [ "$prev" = "--model" ]; then
@@ -477,6 +680,24 @@ _vidkit_complete()
         else
             COMPREPLY=($(compgen -W "--language --model --output --format" -- "$cur"))
             COMPREPLY+=($(compgen -f -X '!*.mp4' -- "$cur"))
+        fi
+    elif [[ "${COMP_WORDS[@]}" =~ burn_subtitles ]]; then
+        if [ "$prev" = "--position" ]; then
+            COMPREPLY=($(compgen -W "top center bottom" -- "$cur"))
+        elif [ "$prev" = "--srt" ]; then
+            COMPREPLY=($(compgen -f -X '!*.srt' -- "$cur"))
+        elif [ "$prev" = "--output" ]; then
+            COMPREPLY=($(compgen -f -X '!*.mp4' -- "$cur"))
+        elif [[ "$prev" =~ ^--(font-size|color|outline|margin)$ ]]; then
+            COMPREPLY=()
+        elif [[ "$cur" =~ ^-- ]]; then
+            COMPREPLY=($(compgen -W "--srt --output --font-size --position --margin --color --outline" -- "$cur"))
+        elif [ "$prev" = "burn_subtitles" ]; then
+            COMPREPLY=($(compgen -f -X '!*.mp4' -- "$cur"))
+            COMPREPLY+=($(compgen -W "--srt --output --font-size --position --margin --color --outline" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -f -X '!*.mp4' -- "$cur"))
+            COMPREPLY+=($(compgen -W "--srt --output --font-size --position --margin --color --outline" -- "$cur"))
         fi
     else
         COMPREPLY=($(compgen -f -X '!*.mp4' -- "$cur"))
