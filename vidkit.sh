@@ -85,6 +85,143 @@ modify_creation_time()
     done
 }
 
+extract_audio() 
+{
+    if [ $# -eq 0 ]; then
+        echo "Usage: extract_audio [options] file1 [file2 ...]"
+        echo "  options:"
+        echo "    --output DIR       Output directory for audio files. Default: same as input file directory"
+        echo "    --output-file FILE Output file path (overrides --output and --format)"
+        echo "    --format FORMAT   Audio format (wav, mp3, aac). Default: wav"
+        return 1
+    fi
+    
+    local output_dir=""
+    local output_file=""
+    local format="wav"
+    local files=()
+    local silent_mode=0
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --output)
+                output_dir="$2"
+                shift 2
+                ;;
+            --output-file)
+                output_file="$2"
+                shift 2
+                ;;
+            --format)
+                format="$2"
+                shift 2
+                ;;
+            --silent)
+                silent_mode=1
+                shift
+                ;;
+            --)
+                shift
+                files+=("$@")
+                break
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    if [ ${#files[@]} -eq 0 ]; then
+        echo "Error: No files specified"
+        return 1
+    fi
+    
+    if [ -n "$output_file" ] && [ ${#files[@]} -gt 1 ]; then
+        echo "Error: --output-file can only be used with a single input file"
+        return 1
+    fi
+    
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        echo "Error: ffmpeg not found. Please install ffmpeg."
+        return 1
+    fi
+    
+    local success_count=0
+    for file in "${files[@]}"; do
+        if [ ! -f "$file" ]; then
+            [ $silent_mode -eq 0 ] && echo "File $file does not exist"
+            [ $silent_mode -eq 1 ] && return 1
+            continue
+        fi
+        
+        local file_dir=$(dirname "$file")
+        local file_basename=$(basename "$file")
+        local file_basename_no_ext="${file_basename%.*}"
+        
+        local output_audio=""
+        local actual_format="$format"
+        if [ -n "$output_file" ]; then
+            output_audio="$output_file"
+            mkdir -p "$(dirname "$output_audio")"
+            if [[ "$output_audio" == *.wav ]]; then
+                actual_format="wav"
+            elif [[ "$output_audio" == *.mp3 ]]; then
+                actual_format="mp3"
+            elif [[ "$output_audio" == *.aac ]]; then
+                actual_format="aac"
+            fi
+        else
+            if [ -z "$output_dir" ]; then
+                output_dir="$file_dir"
+            fi
+            mkdir -p "$output_dir"
+            output_audio="${output_dir}/${file_basename_no_ext}.${format}"
+        fi
+        
+        [ $silent_mode -eq 0 ] && echo "Extracting audio from: $file"
+        
+        local error_output
+        if [ "$actual_format" = "wav" ] || [[ "$output_audio" == *.wav ]]; then
+            error_output=$(ffmpeg -i "$file" -vn -acodec pcm_s16le -ar 16000 -ac 1 "$output_audio" -y 2>&1)
+        elif [ "$actual_format" = "mp3" ] || [[ "$output_audio" == *.mp3 ]]; then
+            error_output=$(ffmpeg -i "$file" -vn -acodec libmp3lame -ar 44100 -ac 2 -b:a 192k "$output_audio" -y 2>&1)
+        elif [ "$actual_format" = "aac" ] || [[ "$output_audio" == *.aac ]]; then
+            error_output=$(ffmpeg -i "$file" -vn -acodec aac -ar 44100 -ac 2 -b:a 192k "$output_audio" -y 2>&1)
+        else
+            [ $silent_mode -eq 0 ] && echo "Error: Unsupported format: $actual_format"
+            continue
+        fi
+        
+        local ffmpeg_exit_code=$?
+        
+        if [ $ffmpeg_exit_code -eq 0 ] && [ -f "$output_audio" ] && [ -s "$output_audio" ]; then
+            [ $silent_mode -eq 0 ] && echo "Audio extracted to: $output_audio"
+            success_count=$((success_count + 1))
+        else
+            [ $silent_mode -eq 0 ] && echo "Error: Failed to extract audio from $file"
+            if [ $silent_mode -eq 0 ]; then
+                echo "$error_output" | tail -n 5
+            else
+                echo "$error_output" | tail -n 5 >&2
+            fi
+            [ -f "$output_audio" ] && rm -f "$output_audio"
+            if [ $silent_mode -eq 1 ]; then
+                return 1
+            fi
+        fi
+        [ $silent_mode -eq 0 ] && echo ""
+    done
+    
+    if [ $success_count -eq 0 ] && [ ${#files[@]} -gt 0 ]; then
+        return 1
+    fi
+}
+
 extract_speech() 
 {
     if [ $# -eq 0 ]; then
@@ -173,13 +310,15 @@ extract_speech()
         local output_file="${output_dir}/${file_basename_no_ext}.${format}"
         
         echo "  Extracting audio..."
-        local error_output
-        error_output=$(ffmpeg -i "$file" -vn -acodec pcm_s16le -ar 16000 -ac 1 "$temp_audio" -y 2>&1)
-        local ffmpeg_exit_code=$?
+        local extract_output
+        extract_output=$(extract_audio "$file" --output-file "$temp_audio" --format wav --silent 2>&1)
+        local extract_exit_code=$?
         
-        if [ $ffmpeg_exit_code -ne 0 ] || [ ! -f "$temp_audio" ]; then
+        if [ $extract_exit_code -ne 0 ] || [ ! -f "$temp_audio" ] || [ ! -s "$temp_audio" ]; then
             echo "  Error: Failed to extract audio from $file"
-            echo "$error_output" | tail -n 5
+            if [ -n "$extract_output" ]; then
+                echo "  Details: $extract_output" | tail -n 3
+            fi
             continue
         fi
         
@@ -320,7 +459,14 @@ _vidkit_complete()
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [ $COMP_CWORD -eq 1 ]; then
-        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_speech show_whisper_models show_metadata" -- "$cur"))
+        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata" -- "$cur"))
+    elif [ "$prev" = "extract_audio" ] || [[ "${COMP_WORDS[@]}" =~ extract_audio.*--(output|format|output-file) ]]; then
+        if [ "$prev" = "--format" ]; then
+            COMPREPLY=($(compgen -W "wav mp3 aac" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -W "--output --output-file --format" -- "$cur"))
+            COMPREPLY+=($(compgen -f -X '!*.mp4' -- "$cur"))
+        fi
     elif [ "$prev" = "extract_speech" ] || [[ "${COMP_WORDS[@]}" =~ --(language|model|output|format) ]]; then
         if [ "$prev" = "--language" ]; then
             COMPREPLY=($(compgen -W "auto zh en ja ko es fr de it pt ru ar hi" -- "$cur"))
