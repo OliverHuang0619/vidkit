@@ -1,5 +1,12 @@
 #!/bin/bash
 
+SCRIPT_DIR=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
+PYTHON_SCRIPT="${SCRIPT_DIR}/utils.py"
+
+if [ ! -f "${PYTHON_SCRIPT}" ]; then
+    PYTHON_SCRIPT="utils.py"
+fi
+
 delete_all_metadata() 
 {
     mkdir -p no_metadata
@@ -193,14 +200,7 @@ extract_speech()
                 echo "  Error: Whisper transcription failed"
             fi
         elif python3 -c "import whisper" 2>/dev/null; then
-            local script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
-            local python_script="${script_dir}/utils.py"
-            
-            if [ ! -f "$python_script" ]; then
-                python_script="utils.py"
-            fi
-            
-            local cmd_args=("$python_script" "transcribe" "$temp_audio" "$output_file" "--model" "$model")
+            local cmd_args=("${PYTHON_SCRIPT}" "transcribe" "$temp_audio" "$output_file" "--model" "$model")
             if [ "$language" != "auto" ]; then
                 cmd_args+=("--language" "$language")
             fi
@@ -258,13 +258,6 @@ show_whisper_models()
     fi
     
     echo ""
-    echo "=== Model Sizes Reference ==="
-    echo "  tiny:   ~39 MB"
-    echo "  base:   ~74 MB"
-    echo "  small:  ~244 MB"
-    echo "  medium: ~769 MB"
-    echo "  large:  ~1550 MB"
-    echo ""
     echo "To download a specific model manually:"
     echo "  python3 -c \"import whisper; whisper.load_model('base')\""
 }
@@ -295,14 +288,7 @@ show_metadata()
             
             if command -v python3 >/dev/null 2>&1; then
                 echo "--- Format Information ---"
-                local script_dir=$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")")
-                local python_script="${script_dir}/utils.py"
-                
-                if [ ! -f "$python_script" ]; then
-                    python_script="utils.py"
-                fi
-                
-                parsed_output=$(echo "$json_output" | python3 "$python_script" parse-metadata 2>/dev/null)
+                parsed_output=$(echo "$json_output" | python3 "${PYTHON_SCRIPT}" parse-metadata 2>/dev/null)
                 
                 if [ $? -eq 0 ] && [ -n "$parsed_output" ]; then
                     echo "$parsed_output"
