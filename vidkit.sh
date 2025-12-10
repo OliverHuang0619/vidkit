@@ -451,6 +451,73 @@ show_metadata()
     done
 }
 
+show_stream_md5() 
+{
+    if [ $# -eq 0 ]; then
+        echo "Usage: show_stream_md5 file1 [file2 ...]"
+        return 1
+    fi
+    
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        echo "Error: ffmpeg not found. Please install ffmpeg."
+        return 1
+    fi
+    
+    if ! command -v ffprobe >/dev/null 2>&1; then
+        echo "Error: ffprobe not found. Please install ffmpeg."
+        return 1
+    fi
+    
+    for file in "$@"; do
+        if [ ! -f "$file" ]; then
+            echo "File $file does not exist"
+            continue
+        fi
+        
+        echo "=== $file ==="
+        echo "--- Stream MD5 Checksums ---"
+        
+        local stream_count
+        stream_count=$(ffprobe -v quiet -show_entries stream=index -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null | wc -l)
+        
+        if [ -z "$stream_count" ] || [ "$stream_count" -eq 0 ]; then
+            echo "Error: Failed to get stream information"
+            echo ""
+            continue
+        fi
+        
+        local stream_index=0
+        while [ $stream_index -lt $stream_count ]; do
+            local codec_type
+            codec_type=$(ffprobe -v quiet -select_streams "$stream_index" -show_entries stream=codec_type -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
+            
+            if [ -n "$codec_type" ]; then
+                local codec_name
+                codec_name=$(ffprobe -v quiet -select_streams "$stream_index" -show_entries stream=codec_name -of default=noprint_wrappers=1:nokey=1 "$file" 2>/dev/null)
+                
+                echo -n "Stream #$stream_index ($codec_type"
+                if [ -n "$codec_name" ]; then
+                    echo -n ", $codec_name"
+                fi
+                echo -n "): "
+                
+                local md5_output
+                md5_output=$(ffmpeg -i "$file" -map 0:$stream_index -c copy -f hash -hash md5 - 2>/dev/null | grep -i "MD5=" | sed 's/.*MD5=\([0-9a-f]\{32\}\).*/\1/' | head -n 1)
+                
+                if [ -z "$md5_output" ] || [ ${#md5_output} -ne 32 ]; then
+                    echo "N/A"
+                else
+                    echo "$md5_output"
+                fi
+            fi
+            
+            stream_index=$((stream_index + 1))
+        done
+        
+        echo ""
+    done
+}
+
 burn_subtitles() 
 {
     if [ $# -eq 0 ]; then
@@ -662,7 +729,7 @@ _vidkit_complete()
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [ $COMP_CWORD -eq 1 ]; then
-        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata burn_subtitles" -- "$cur"))
+        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata show_stream_md5 burn_subtitles" -- "$cur"))
     elif [ "$prev" = "extract_audio" ] || [[ "${COMP_WORDS[@]}" =~ extract_audio.*--(output|format|output-file) ]]; then
         if [ "$prev" = "--format" ]; then
             COMPREPLY=($(compgen -W "wav mp3 aac" -- "$cur"))
