@@ -518,6 +518,110 @@ show_stream_md5()
     done
 }
 
+extract_watermark() 
+{
+    if [ $# -eq 0 ]; then
+        echo "Usage: extract_watermark [options] file1 [file2 ...]"
+        echo "  options:"
+        echo "    --frames NUM      Number of frames to analyze (default: 5)"
+        echo "    --region X,Y,W,H  Region to search for watermark (x,y,width,height)"
+        echo "    --confidence NUM  Minimum confidence threshold 0-1 (default: 0.5)"
+        echo "    --engine NAME     OCR engine (auto, easyocr, tesseract). Default: auto"
+        echo "    --format FORMAT   Output format (text, json). Default: text"
+        return 1
+    fi
+    
+    local frames=5
+    local region=""
+    local confidence=0.5
+    local engine="auto"
+    local format="text"
+    local files=()
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --frames)
+                frames="$2"
+                shift 2
+                ;;
+            --region)
+                region="$2"
+                shift 2
+                ;;
+            --confidence)
+                confidence="$2"
+                shift 2
+                ;;
+            --engine)
+                engine="$2"
+                shift 2
+                ;;
+            --format)
+                format="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                files+=("$@")
+                break
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    if [ ${#files[@]} -eq 0 ]; then
+        echo "Error: No files specified"
+        return 1
+    fi
+    
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: python3 not found. Please install python3."
+        return 1
+    fi
+    
+    if ! python3 -c "import cv2" 2>/dev/null; then
+        echo "Error: OpenCV not found."
+        echo "Please install: pip install opencv-python"
+        return 1
+    fi
+    
+    if ! python3 -c "import pytesseract" 2>/dev/null && ! python3 -c "import easyocr" 2>/dev/null; then
+        echo "Error: OCR library not found."
+        echo "Please install one of:"
+        echo "  pip install pytesseract"
+        echo "  pip install easyocr"
+        return 1
+    fi
+    
+    for file in "${files[@]}"; do
+        if [ ! -f "$file" ]; then
+            echo "File $file does not exist"
+            continue
+        fi
+        
+        echo "=== Analyzing: $file ==="
+        
+        local cmd_args=("${PYTHON_SCRIPT}" "detect-watermark" "$file" "--frames" "$frames" "--confidence" "$confidence" "--engine" "$engine" "--format" "$format")
+        if [ -n "$region" ]; then
+            cmd_args+=("--region" "$region")
+        fi
+        
+        if python3 "${cmd_args[@]}" 2>&1; then
+            echo ""
+        else
+            echo "Error: Failed to detect watermark in $file"
+        fi
+        echo ""
+    done
+}
+
 burn_subtitles() 
 {
     if [ $# -eq 0 ]; then
@@ -721,6 +825,233 @@ burn_subtitles()
     fi
 }
 
+remove_watermark()
+{
+    if [ $# -eq 0 ]; then
+        echo "Usage: remove_watermark [options] video1 [video2 ...]"
+        echo "  options:"
+        echo "    --region X,Y,W,H   Region to remove watermark (recommended, most reliable)"
+        echo "    --auto             Auto-detect region via OCR (uses top consistent watermark)"
+        echo "    --text TEXT        When using --auto, pick a specific watermark text"
+        echo "    --engine NAME      OCR engine for --auto (auto, easyocr, tesseract). Default: auto"
+        echo "    --frames NUM       Frames for --auto detection (default: 5)"
+        echo "    --confidence NUM   Confidence for --auto detection (default: 0.5)"
+        echo "    --padding NUM      Padding ratio for suggested region (default: 0.08)"
+        echo "    --output DIR       Output directory (default: same as input)"
+        echo "    --suffix STR       Output suffix before extension (default: _clean)"
+        echo "    --crf NUM          x264 CRF (default: 18)"
+        echo "    --preset NAME      x264 preset (default: medium)"
+        return 1
+    fi
+    
+    local region=""
+    local auto_mode=0
+    local pick_text=""
+    local engine="auto"
+    local frames=5
+    local confidence=0.5
+    local padding=0.08
+    local output_dir=""
+    local suffix="_clean"
+    local crf=18
+    local preset="medium"
+    local files=()
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --region)
+                region="$2"
+                shift 2
+                ;;
+            --auto)
+                auto_mode=1
+                shift
+                ;;
+            --text)
+                pick_text="$2"
+                shift 2
+                ;;
+            --engine)
+                engine="$2"
+                shift 2
+                ;;
+            --frames)
+                frames="$2"
+                shift 2
+                ;;
+            --confidence)
+                confidence="$2"
+                shift 2
+                ;;
+            --padding)
+                padding="$2"
+                shift 2
+                ;;
+            --output)
+                output_dir="$2"
+                shift 2
+                ;;
+            --suffix)
+                suffix="$2"
+                shift 2
+                ;;
+            --crf)
+                crf="$2"
+                shift 2
+                ;;
+            --preset)
+                preset="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                files+=("$@")
+                break
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    if [ ${#files[@]} -eq 0 ]; then
+        echo "Error: No files specified"
+        return 1
+    fi
+    
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+        echo "Error: ffmpeg not found. Please install ffmpeg."
+        return 1
+    fi
+    
+    if [ $auto_mode -eq 1 ]; then
+        if ! command -v python3 >/dev/null 2>&1; then
+            echo "Error: python3 not found. Please install python3."
+            return 1
+        fi
+    fi
+    
+    for file in "${files[@]}"; do
+        if [ ! -f "$file" ]; then
+            echo "File $file does not exist"
+            continue
+        fi
+        
+        local file_dir=$(dirname "$file")
+        local file_basename=$(basename "$file")
+        local file_basename_no_ext="${file_basename%.*}"
+        local file_ext="${file_basename##*.}"
+        
+        local out_dir="$file_dir"
+        if [ -n "$output_dir" ]; then
+            out_dir="$output_dir"
+        fi
+        mkdir -p "$out_dir"
+        
+        local output_file="${out_dir}/${file_basename_no_ext}${suffix}.${file_ext}"
+        local temp_file="${out_dir}/.${file_basename_no_ext}${suffix}.tmp.${file_ext}"
+        
+        local actual_region="$region"
+        if [ $auto_mode -eq 1 ]; then
+            echo "Auto-detecting watermark region for: $file"
+            local detected_region
+            detected_region=$(python3 - "$file" "$PYTHON_SCRIPT" "$frames" "$confidence" "$engine" "$padding" "$pick_text" <<'PY'
+import json, subprocess, sys
+
+if len(sys.argv) < 8:
+    sys.stderr.write("Error: remove_watermark --auto internal arg passing failed\n")
+    sys.exit(1)
+
+file_path = sys.argv[1]
+py_script = sys.argv[2]
+frames = sys.argv[3]
+confidence = sys.argv[4]
+engine = sys.argv[5]
+padding = sys.argv[6]
+pick_text = sys.argv[7]
+
+cmd = [
+    sys.executable, py_script, "detect-watermark", file_path,
+    "--frames", str(frames),
+    "--confidence", str(confidence),
+    "--engine", str(engine),
+    "--padding", str(padding),
+    "--format", "json",
+]
+proc = subprocess.run(cmd, capture_output=True, text=True)
+if proc.returncode != 0:
+    sys.stderr.write(proc.stderr or proc.stdout or "")
+    sys.exit(proc.returncode)
+
+data = json.loads(proc.stdout)
+wms = data.get("watermarks") or []
+if not wms:
+    sys.exit(2)
+
+chosen = None
+if pick_text:
+    for wm in wms:
+        if (wm.get("text") or "").strip() == pick_text.strip():
+            chosen = wm
+            break
+if chosen is None:
+    chosen = wms[0]
+
+region = chosen.get("region")
+if not region or len(region) != 4:
+    sys.exit(3)
+x, y, w, h = region
+print(f"{int(x)},{int(y)},{int(w)},{int(h)}")
+PY
+            )
+            
+            if [ -z "$detected_region" ]; then
+                echo "Error: Auto-detect failed. Try specifying --region X,Y,W,H"
+                continue
+            fi
+            actual_region="$detected_region"
+            echo "  Using region: $actual_region"
+        fi
+        
+        if [ -z "$actual_region" ]; then
+            echo "Error: Missing --region. Provide --region X,Y,W,H or use --auto"
+            continue
+        fi
+        
+        local x y w h
+        IFS=',' read -r x y w h <<< "$actual_region"
+        if [ -z "$x" ] || [ -z "$y" ] || [ -z "$w" ] || [ -z "$h" ]; then
+            echo "Error: Invalid region format. Use: X,Y,W,H"
+            continue
+        fi
+        
+        echo "Removing watermark..."
+        echo "  Input: $file"
+        echo "  Region: $x,$y,$w,$h"
+        echo "  Output: $output_file"
+        
+        local error_output
+        error_output=$(ffmpeg -i "$file" -vf "delogo=x=${x}:y=${y}:w=${w}:h=${h}" -c:v libx264 -preset "$preset" -crf "$crf" -c:a copy -map 0:v:0 -map 0:a? "$temp_file" -y 2>&1)
+        local ffmpeg_exit_code=$?
+        
+        if [ $ffmpeg_exit_code -eq 0 ] && [ -f "$temp_file" ] && [ -s "$temp_file" ]; then
+            mv "$temp_file" "$output_file"
+            echo "Success: Watermark removed -> $output_file"
+        else
+            echo "Error: Failed to remove watermark"
+            echo "$error_output" | tail -n 20
+            [ -f "$temp_file" ] && rm -f "$temp_file"
+        fi
+        
+        echo ""
+    done
+}
+
 _vidkit_complete()
 {
     local cur prev
@@ -729,7 +1060,7 @@ _vidkit_complete()
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     if [ $COMP_CWORD -eq 1 ]; then
-        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata show_stream_md5 burn_subtitles" -- "$cur"))
+        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata show_stream_md5 extract_watermark burn_subtitles remove_watermark" -- "$cur"))
     elif [ "$prev" = "extract_audio" ] || [[ "${COMP_WORDS[@]}" =~ extract_audio.*--(output|format|output-file) ]]; then
         if [ "$prev" = "--format" ]; then
             COMPREPLY=($(compgen -W "wav mp3 aac" -- "$cur"))
@@ -746,6 +1077,13 @@ _vidkit_complete()
             COMPREPLY=($(compgen -W "txt srt vtt json" -- "$cur"))
         else
             COMPREPLY=($(compgen -W "--language --model --output --format" -- "$cur"))
+            COMPREPLY+=($(compgen -f -X '!*.mp4' -- "$cur"))
+        fi
+    elif [ "$prev" = "extract_watermark" ] || [[ "${COMP_WORDS[@]}" =~ extract_watermark.*--(frames|region|confidence|format) ]]; then
+        if [ "$prev" = "--format" ]; then
+            COMPREPLY=($(compgen -W "text json" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -W "--frames --region --confidence --format" -- "$cur"))
             COMPREPLY+=($(compgen -f -X '!*.mp4' -- "$cur"))
         fi
     elif [[ "${COMP_WORDS[@]}" =~ burn_subtitles ]]; then
