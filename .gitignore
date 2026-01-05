@@ -16,3 +16,4 @@
 transcriptions
 .cursorindexingignore
 .specstory
+__pycache__

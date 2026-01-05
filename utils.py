@@ -6,6 +6,11 @@ import argparse
 import os
 import subprocess
 import tempfile
+<<<<<<< HEAD
+=======
+import math
+import warnings
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
 
 
 def transcribe_audio(audio_file, output_file, model_name, language=None, output_format='txt'):
@@ -60,7 +65,11 @@ def transcribe_audio(audio_file, output_file, model_name, language=None, output_
         sys.exit(1)
 
 
+<<<<<<< HEAD
 def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
+=======
+def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5, engine='auto', padding=0.08):
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
     """
     Detect watermark text in video frames using OCR.
     
@@ -73,11 +82,21 @@ def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
     Returns:
         Dictionary with detected watermark information
     """
+<<<<<<< HEAD
+=======
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Signature .* for <class 'numpy\.longdouble'> does not match any known type.*",
+        category=UserWarning,
+    )
+
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
     try:
         import cv2
     except ImportError:
         print("Error: OpenCV not found. Please install: pip install opencv-python", file=sys.stderr)
         sys.exit(1)
+<<<<<<< HEAD
     
     ocr_engine = None
     reader = None
@@ -118,6 +137,68 @@ def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
                 sys.exit(1)
             else:
                 ocr_engine = 'easyocr'
+=======
+
+    engine = (engine or "auto").strip().lower()
+    if engine not in ("auto", "easyocr", "tesseract"):
+        print("Error: Invalid OCR engine. Use: auto, easyocr, or tesseract", file=sys.stderr)
+        sys.exit(1)
+
+    ocr_engine = None
+    reader = None
+    pytesseract_module = None
+    easyocr_error = None
+    tesseract_error = None
+
+    def try_init_easyocr():
+        nonlocal reader, easyocr_error
+        try:
+            import easyocr
+            reader = easyocr.Reader(['en', 'ch_sim'], gpu=False)
+            return True
+        except ImportError as e:
+            easyocr_error = e
+            return False
+        except Exception as e:
+            easyocr_error = e
+            return False
+
+    def try_init_tesseract():
+        nonlocal pytesseract_module, tesseract_error
+        try:
+            import pytesseract
+            pytesseract_module = pytesseract
+            pytesseract.get_tesseract_version()
+            return True
+        except ImportError as e:
+            tesseract_error = e
+            return False
+        except Exception as e:
+            tesseract_error = e
+            return False
+
+    if engine in ("auto", "easyocr") and try_init_easyocr():
+        ocr_engine = "easyocr"
+    elif engine in ("auto", "tesseract") and try_init_tesseract():
+        ocr_engine = "tesseract"
+    elif engine == "easyocr":
+        print(f"Error: EasyOCR initialization failed: {easyocr_error}", file=sys.stderr)
+        print("Hint: EasyOCR may need to download models on first run. If your network is restricted,", file=sys.stderr)
+        print("      pre-download models to ~/.EasyOCR/ or try engine 'tesseract'.", file=sys.stderr)
+        sys.exit(1)
+    elif engine == "tesseract":
+        print(f"Error: Tesseract initialization failed: {tesseract_error}", file=sys.stderr)
+        print("Hint: Install the system tesseract-ocr package and then 'pip install pytesseract'.", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print("Error: No working OCR engine found.", file=sys.stderr)
+        print(f"  EasyOCR error: {easyocr_error}", file=sys.stderr)
+        print(f"  Tesseract error: {tesseract_error}", file=sys.stderr)
+        print("Please install one of:", file=sys.stderr)
+        print("  1) EasyOCR: pip install easyocr", file=sys.stderr)
+        print("  2) Tesseract: install tesseract-ocr (system), then pip install pytesseract", file=sys.stderr)
+        sys.exit(1)
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
     
     if not os.path.exists(video_file):
         print(f"Error: Video file not found: {video_file}", file=sys.stderr)
@@ -141,6 +222,11 @@ def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
         frame_indices = [0]
     
     detected_texts = []
+<<<<<<< HEAD
+=======
+    offset_x = 0
+    offset_y = 0
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
     
     for frame_idx in frame_indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
@@ -150,12 +236,18 @@ def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
         
         if region:
             x, y, w, h = region
+<<<<<<< HEAD
+=======
+            offset_x = int(x)
+            offset_y = int(y)
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
             frame = frame[y:y+h, x:x+w]
         
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         if ocr_engine == 'tesseract' and pytesseract_module is not None:
             try:
+<<<<<<< HEAD
                 data = pytesseract_module.image_to_data(gray, output_type=pytesseract_module.Output.DICT, lang='eng+chi_sim')
                 for i, text in enumerate(data['text']):
                     if text.strip() and float(data['conf'][i]) > min_confidence * 100:
@@ -164,6 +256,37 @@ def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
                             'confidence': float(data['conf'][i]) / 100,
                             'frame': frame_idx,
                             'bbox': (data['left'][i], data['top'][i], data['width'][i], data['height'][i])
+=======
+                try:
+                    data = pytesseract_module.image_to_data(
+                        gray,
+                        output_type=pytesseract_module.Output.DICT,
+                        lang='eng+chi_sim',
+                    )
+                except Exception:
+                    data = pytesseract_module.image_to_data(
+                        gray,
+                        output_type=pytesseract_module.Output.DICT,
+                        lang='eng',
+                    )
+
+                for i, text in enumerate(data.get('text', [])):
+                    try:
+                        conf_val = float(data['conf'][i])
+                    except Exception:
+                        conf_val = -1.0
+                    if text and text.strip() and conf_val > min_confidence * 100:
+                        left = int(data['left'][i]) + offset_x
+                        top = int(data['top'][i]) + offset_y
+                        width = int(data['width'][i])
+                        height = int(data['height'][i])
+                        detected_texts.append({
+                            'text': text.strip(),
+                            'confidence': conf_val / 100.0,
+                            'frame': frame_idx,
+                            'bbox': (left, top, width, height),
+                            'bbox_xywh': (left, top, width, height),
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
                         })
             except Exception as e:
                 print(f"Warning: Tesseract OCR error: {e}", file=sys.stderr)
@@ -172,11 +295,29 @@ def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
                 results = reader.readtext(gray)
                 for (bbox, text, confidence) in results:
                     if confidence >= min_confidence:
+<<<<<<< HEAD
+=======
+                        try:
+                            xs = [p[0] for p in bbox]
+                            ys = [p[1] for p in bbox]
+                            min_x = int(min(xs)) + offset_x
+                            min_y = int(min(ys)) + offset_y
+                            max_x = int(max(xs)) + offset_x
+                            max_y = int(max(ys)) + offset_y
+                            xywh = (min_x, min_y, max(1, max_x - min_x), max(1, max_y - min_y))
+                        except Exception:
+                            xywh = None
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
                         detected_texts.append({
                             'text': text.strip(),
                             'confidence': confidence,
                             'frame': frame_idx,
+<<<<<<< HEAD
                             'bbox': bbox
+=======
+                            'bbox': bbox,
+                            'bbox_xywh': xywh,
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
                         })
             except Exception as e:
                 print(f"Warning: EasyOCR error: {e}", file=sys.stderr)
@@ -190,6 +331,7 @@ def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
             'message': 'No watermark text detected'
         }
     
+<<<<<<< HEAD
     text_frequency = {}
     for item in detected_texts:
         text = item['text']
@@ -216,6 +358,61 @@ def detect_watermark(video_file, num_frames=5, region=None, min_confidence=0.5):
                 'frames': sorted(set(info['frames'])),
                 'appears_consistently': info['count'] >= num_frames * 0.6
             })
+=======
+    def normalize_text(s: str) -> str:
+        return (s or "").strip()
+
+    text_stats = {}
+    for item in detected_texts:
+        text = normalize_text(item.get('text', ''))
+        if not text:
+            continue
+        frame_no = item.get('frame')
+        confidence = float(item.get('confidence', 0.0) or 0.0)
+        bbox_xywh = item.get('bbox_xywh')
+        stats = text_stats.setdefault(text, {"occurrences": 0, "frame_conf": {}, "frame_bbox": {}})
+        stats["occurrences"] += 1
+        if frame_no is not None:
+            prev = stats["frame_conf"].get(frame_no, 0.0)
+            if confidence > prev:
+                stats["frame_conf"][frame_no] = confidence
+            if bbox_xywh is not None:
+                stats["frame_bbox"][frame_no] = bbox_xywh
+
+    watermarks = []
+    consistency_threshold = int(math.ceil(num_frames * 0.6)) if num_frames and num_frames > 0 else 0
+    for text, info in text_stats.items():
+        frames = sorted(info["frame_conf"].keys())
+        frame_frequency = len(frames)
+        if frame_frequency < 2:
+            continue
+        avg_confidence = sum(info["frame_conf"].values()) / max(1, frame_frequency)
+        bboxes = [info["frame_bbox"].get(f) for f in frames if info["frame_bbox"].get(f) is not None]
+        suggested_region = None
+        if bboxes:
+            xs = [b[0] for b in bboxes]
+            ys = [b[1] for b in bboxes]
+            ws = [b[2] for b in bboxes]
+            hs = [b[3] for b in bboxes]
+            mx = int(sorted(xs)[len(xs)//2])
+            my = int(sorted(ys)[len(ys)//2])
+            mw = int(sorted(ws)[len(ws)//2])
+            mh = int(sorted(hs)[len(hs)//2])
+            pad = max(0.0, float(padding or 0.0))
+            px = int(mw * pad)
+            py = int(mh * pad)
+            suggested_region = (max(0, mx - px), max(0, my - py), mw + 2 * px, mh + 2 * py)
+
+        watermarks.append({
+            'text': text,
+            'frequency': frame_frequency,
+            'confidence': avg_confidence,
+            'frames': frames,
+            'appears_consistently': frame_frequency >= max(2, consistency_threshold),
+            'occurrences': info["occurrences"],
+            'region': suggested_region,
+        })
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
     
     watermarks.sort(key=lambda x: (x['appears_consistently'], x['frequency'], x['confidence']), reverse=True)
     
@@ -299,6 +496,11 @@ def main():
     watermark_parser.add_argument('--frames', type=int, default=5, help='Number of frames to analyze (default: 5)')
     watermark_parser.add_argument('--region', help='Region to search (x,y,width,height)')
     watermark_parser.add_argument('--confidence', type=float, default=0.5, help='Minimum confidence (0-1, default: 0.5)')
+<<<<<<< HEAD
+=======
+    watermark_parser.add_argument('--engine', default='auto', choices=['auto', 'easyocr', 'tesseract'], help='OCR engine (auto, easyocr, tesseract)')
+    watermark_parser.add_argument('--padding', type=float, default=0.08, help='Suggested region padding ratio (default: 0.08)')
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
     watermark_parser.add_argument('--format', default='text', choices=['text', 'json'], help='Output format')
     
     args = parser.parse_args()
@@ -325,7 +527,11 @@ def main():
                 print("Error: Invalid region format. Use: x,y,width,height", file=sys.stderr)
                 sys.exit(1)
         
+<<<<<<< HEAD
         result = detect_watermark(args.video_file, args.frames, region, args.confidence)
+=======
+        result = detect_watermark(args.video_file, args.frames, region, args.confidence, args.engine, args.padding)
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
         
         if args.format == 'json':
             print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -342,6 +548,12 @@ def main():
                     print(f"     Confidence: {wm['confidence']:.2%}")
                     print(f"     Consistent: {'Yes' if wm['appears_consistently'] else 'No'}")
                     print(f"     Frames: {wm['frames']}")
+<<<<<<< HEAD
+=======
+                    if wm.get('region'):
+                        x, y, w, h = wm['region']
+                        print(f"     Suggested region: {x},{y},{w},{h}")
+>>>>>>> 7f6f5f102ec9d519588c719ed9205dbfa9dfb27b
                     print("")
             else:
                 print("No watermark detected in video.")
