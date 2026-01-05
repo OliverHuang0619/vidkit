@@ -518,6 +518,104 @@ show_stream_md5()
     done
 }
 
+extract_watermark() 
+{
+    if [ $# -eq 0 ]; then
+        echo "Usage: extract_watermark [options] file1 [file2 ...]"
+        echo "  options:"
+        echo "    --frames NUM      Number of frames to analyze (default: 5)"
+        echo "    --region X,Y,W,H  Region to search for watermark (x,y,width,height)"
+        echo "    --confidence NUM  Minimum confidence threshold 0-1 (default: 0.5)"
+        echo "    --format FORMAT   Output format (text, json). Default: text"
+        return 1
+    fi
+    
+    local frames=5
+    local region=""
+    local confidence=0.5
+    local format="text"
+    local files=()
+    
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --frames)
+                frames="$2"
+                shift 2
+                ;;
+            --region)
+                region="$2"
+                shift 2
+                ;;
+            --confidence)
+                confidence="$2"
+                shift 2
+                ;;
+            --format)
+                format="$2"
+                shift 2
+                ;;
+            --)
+                shift
+                files+=("$@")
+                break
+                ;;
+            -*)
+                echo "Unknown option: $1"
+                return 1
+                ;;
+            *)
+                files+=("$1")
+                shift
+                ;;
+        esac
+    done
+    
+    if [ ${#files[@]} -eq 0 ]; then
+        echo "Error: No files specified"
+        return 1
+    fi
+    
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Error: python3 not found. Please install python3."
+        return 1
+    fi
+    
+    if ! python3 -c "import cv2" 2>/dev/null; then
+        echo "Error: OpenCV not found."
+        echo "Please install: pip install opencv-python"
+        return 1
+    fi
+    
+    if ! python3 -c "import pytesseract" 2>/dev/null && ! python3 -c "import easyocr" 2>/dev/null; then
+        echo "Error: OCR library not found."
+        echo "Please install one of:"
+        echo "  pip install pytesseract"
+        echo "  pip install easyocr"
+        return 1
+    fi
+    
+    for file in "${files[@]}"; do
+        if [ ! -f "$file" ]; then
+            echo "File $file does not exist"
+            continue
+        fi
+        
+        echo "=== Analyzing: $file ==="
+        
+        local cmd_args=("${PYTHON_SCRIPT}" "detect-watermark" "$file" "--frames" "$frames" "--confidence" "$confidence" "--format" "$format")
+        if [ -n "$region" ]; then
+            cmd_args+=("--region" "$region")
+        fi
+        
+        if python3 "${cmd_args[@]}" 2>&1; then
+            echo ""
+        else
+            echo "Error: Failed to detect watermark in $file"
+        fi
+        echo ""
+    done
+}
+
 burn_subtitles() 
 {
     if [ $# -eq 0 ]; then
@@ -721,21 +819,67 @@ burn_subtitles()
     fi
 }
 
+_vidkit_find_mp4()
+{
+    local cur="$1"
+    local search_path="."
+    
+    if [[ "$cur" == */* ]]; then
+        search_path="${cur%/*}"
+        if [ ! -d "$search_path" ]; then
+            return
+        fi
+    fi
+    
+    find "$search_path" -type f -iname "*.mp4" 2>/dev/null | sed 's|^\./||' | sort
+}
+
 _vidkit_complete()
 {
-    local cur prev
+    local cur prev cmd
     COMPREPLY=()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
+    
+    if [ ${#COMP_WORDS[@]} -ge 2 ]; then
+        cmd="${COMP_WORDS[1]}"
+    else
+        cmd=""
+    fi
 
     if [ $COMP_CWORD -eq 1 ]; then
-        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata show_stream_md5 burn_subtitles" -- "$cur"))
+        COMPREPLY=($(compgen -W "delete_all_metadata modify_creation_time extract_audio extract_speech show_whisper_models show_metadata show_stream_md5 extract_watermark burn_subtitles" -- "$cur"))
+    elif [ "$cmd" = "modify_creation_time" ]; then
+        local mp4_files dirs
+        mp4_files=$(_vidkit_find_mp4 "$cur")
+        dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
+        if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+            COMPREPLY=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+        fi
+    elif [ "$cmd" = "delete_all_metadata" ]; then
+        local mp4_files dirs
+        mp4_files=$(_vidkit_find_mp4 "$cur")
+        dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
+        if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+            COMPREPLY=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+        fi
     elif [ "$prev" = "extract_audio" ] || [[ "${COMP_WORDS[@]}" =~ extract_audio.*--(output|format|output-file) ]]; then
         if [ "$prev" = "--format" ]; then
             COMPREPLY=($(compgen -W "wav mp3 aac" -- "$cur"))
         else
+            local mp4_files dirs
+            mp4_files=$(_vidkit_find_mp4 "$cur")
+            dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
             COMPREPLY=($(compgen -W "--output --output-file --format" -- "$cur"))
-            COMPREPLY+=($(compgen -f -X '!*.mp4' -- "$cur"))
+            if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+                COMPREPLY+=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+            else
+                COMPREPLY+=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+            fi
         fi
     elif [ "$prev" = "extract_speech" ] || [[ "${COMP_WORDS[@]}" =~ extract_speech.*--(language|model|output|format) ]]; then
         if [ "$prev" = "--language" ]; then
@@ -745,8 +889,29 @@ _vidkit_complete()
         elif [ "$prev" = "--format" ]; then
             COMPREPLY=($(compgen -W "txt srt vtt json" -- "$cur"))
         else
+            local mp4_files dirs
+            mp4_files=$(_vidkit_find_mp4 "$cur")
+            dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
             COMPREPLY=($(compgen -W "--language --model --output --format" -- "$cur"))
-            COMPREPLY+=($(compgen -f -X '!*.mp4' -- "$cur"))
+            if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+                COMPREPLY+=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+            else
+                COMPREPLY+=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+            fi
+        fi
+    elif [ "$prev" = "extract_watermark" ] || [[ "${COMP_WORDS[@]}" =~ extract_watermark.*--(frames|region|confidence|format) ]]; then
+        if [ "$prev" = "--format" ]; then
+            COMPREPLY=($(compgen -W "text json" -- "$cur"))
+        else
+            local mp4_files dirs
+            mp4_files=$(_vidkit_find_mp4 "$cur")
+            dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
+            COMPREPLY=($(compgen -W "--frames --region --confidence --format" -- "$cur"))
+            if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+                COMPREPLY+=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+            else
+                COMPREPLY+=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+            fi
         fi
     elif [[ "${COMP_WORDS[@]}" =~ burn_subtitles ]]; then
         if [ "$prev" = "--position" ]; then
@@ -754,27 +919,68 @@ _vidkit_complete()
         elif [ "$prev" = "--srt" ]; then
             COMPREPLY=($(compgen -f -X '!*.srt' -- "$cur"))
         elif [ "$prev" = "--output" ]; then
-            COMPREPLY=($(compgen -f -X '!*.mp4' -- "$cur"))
+            local mp4_files dirs
+            mp4_files=$(_vidkit_find_mp4 "$cur")
+            dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
+            if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+                COMPREPLY=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+            fi
         elif [[ "$prev" =~ ^--(font-size|color|outline|margin)$ ]]; then
             COMPREPLY=()
         elif [[ "$cur" =~ ^-- ]]; then
             COMPREPLY=($(compgen -W "--srt --output --font-size --position --margin --color --outline" -- "$cur"))
         elif [ "$prev" = "burn_subtitles" ]; then
-            COMPREPLY=($(compgen -f -X '!*.mp4' -- "$cur"))
+            local mp4_files dirs
+            mp4_files=$(_vidkit_find_mp4 "$cur")
+            dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
+            if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+                COMPREPLY=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+            fi
             COMPREPLY+=($(compgen -W "--srt --output --font-size --position --margin --color --outline" -- "$cur"))
         else
-            COMPREPLY=($(compgen -f -X '!*.mp4' -- "$cur"))
+            local mp4_files dirs
+            mp4_files=$(_vidkit_find_mp4 "$cur")
+            dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
+            if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+                COMPREPLY=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+            else
+                COMPREPLY=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+            fi
             COMPREPLY+=($(compgen -W "--srt --output --font-size --position --margin --color --outline" -- "$cur"))
         fi
+    elif [ "$cmd" = "show_metadata" ]; then
+        COMPREPLY=($(compgen -f -o plusdirs -- "$cur"))
+    elif [ "$cmd" = "show_stream_md5" ]; then
+        COMPREPLY=($(compgen -f -o plusdirs -- "$cur"))
     else
-        COMPREPLY=($(compgen -f -X '!*.mp4' -- "$cur"))
+        local mp4_files dirs
+        mp4_files=$(_vidkit_find_mp4 "$cur")
+        dirs=$(compgen -d -S / -- "$cur" 2>/dev/null)
+        if [ -n "$mp4_files" ] || [ -n "$dirs" ]; then
+            COMPREPLY=($(compgen -W "$mp4_files $dirs" -- "$cur"))
+        else
+            COMPREPLY=($(compgen -f -o plusdirs -X '!*.mp4' -- "$cur"))
+        fi
     fi
     return 0
 }
 
 if [ "${BASH_SOURCE[0]}" != "${0}" ]; then
-    complete -F _vidkit_complete vidkit.sh
-    complete -F _vidkit_complete ./vidkit.sh
+    script_name=$(basename "${BASH_SOURCE[0]}")
+    script_path=$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")
+    script_dir=$(dirname "$script_path")
+    
+    complete -o filenames -F _vidkit_complete "$script_name"
+    complete -o filenames -F _vidkit_complete "./$script_name"
+    complete -o filenames -F _vidkit_complete "$script_path"
+    if [ -n "$script_dir" ] && [ "$script_dir" != "." ]; then
+        complete -o filenames -F _vidkit_complete "$script_dir/$script_name"
+        complete -o filenames -F _vidkit_complete "$(basename "$script_dir")/$script_name"
+    fi
     return 0
 fi
 
